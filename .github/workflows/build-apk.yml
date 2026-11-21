@@ -1,13 +1,12 @@
-name: Build Futuro Ahora Admin APK
+name: Build Yimmi Kambio Admin APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build-android:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,106 +16,66 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
-      - name: Setup Java 21
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "21"
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install ImageMagick for icon scaling
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
 
       - name: Install dependencies
         run: npm install
 
-      - name: Prepare web assets & sync Capacitor
+      - name: Add Android platform if missing
         run: |
-          mkdir -p www
-          if [ -f "index.html" ]; then
-            cp index.html www/index.html
-          elif [ -f "admin.html" ] && [ ! -f "index.html" ]; then
-            cp admin.html www/index.html
+          if [ ! -f "android/gradlew" ]; then
+            rm -rf android
+            npx cap add android
           fi
-          ls -la www
-          npx cap add android || true
+          mkdir -p android/app/src/main/assets
+
+      - name: Sync web assets to Android
+        run: |
+          mkdir -p android/app/src/main/assets
           npx cap sync android
 
-      - name: Configure Android camera permission
+      - name: Apply centered Futuro Ahora app icon
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ] && ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
-            python3 - << 'PYEOF'
-          path = "android/app/src/main/AndroidManifest.xml"
-          with open(path, "r", encoding="utf-8") as f:
-              content = f.read()
-          perm = '    <uses-permission android:name="android.permission.CAMERA" />\n'
-          if "<manifest" in content and ">" in content:
-              idx = content.find(">", content.find("<manifest")) + 1
-              content = content[:idx] + "\n" + perm + content[idx:]
-              with open(path, "w", encoding="utf-8") as f:
-                  f.write(content)
-          PYEOF
+          curl -fsSL "https://i.postimg.cc/qqPkkZH3/20261116-035439-0000.png" -o /tmp/futuro_logo_raw.png
+
+          for dir in android/app/src/main/res/mipmap-*; do
+            [ -d "$dir" ] || continue
+            for target in "$dir"/ic_launcher.png "$dir"/ic_launcher_round.png "$dir"/ic_launcher_foreground.png; do
+              if [ -f "$target" ]; then
+                w=$(identify -format "%w" "$target")
+                h=$(identify -format "%h" "$target")
+                inner_w=$((w * 54 / 100))
+                inner_h=$((h * 54 / 100))
+                convert /tmp/futuro_logo_raw.png \
+                  -resize "${inner_w}x${inner_h}" \
+                  -background "#ffffff" \
+                  -gravity center \
+                  -extent "${w}x${h}" \
+                  -alpha off \
+                  "$target"
+              fi
+            done
+          done
+
+          if [ -f "android/app/src/main/res/values/ic_launcher_background.xml" ]; then
+            cat << 'EOF' > android/app/src/main/res/values/ic_launcher_background.xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>
+EOF
           fi
 
-      - name: Set Futuro Ahora official icon with white background
-        run: |
-          rm -f raw_logo.png logo_admin.png
-          curl -fsSL "https://i.postimg.cc/qqPkkZH3/20261116-035439-0000.png" -o raw_logo.png || true
-          python3 - << 'PYEOF'
-          import os, shutil
-          size = 512
-          bg_color = (255, 255, 255, 255)
-          has_remote = os.path.exists("raw_logo.png") and os.path.getsize("raw_logo.png") > 100
-          try:
-              from PIL import Image, ImageDraw
-              bg = Image.new("RGBA", (size, size), bg_color)
-              if has_remote:
-                  fg = Image.open("raw_logo.png").convert("RGBA")
-                  fg.thumbnail((340, 340), Image.Resampling.LANCZOS)
-                  x = (size - fg.width) // 2
-                  y = (size - fg.height) // 2
-                  bg.paste(fg, (x, y), fg)
-              else:
-                  draw = ImageDraw.Draw(bg)
-                  draw.rounded_rectangle([96, 96, 416, 416], radius=64, outline=(168, 85, 247, 255), width=12)
-              bg.convert("RGB").save("logo_admin.png", "PNG")
-          except Exception:
-              if has_remote:
-                  shutil.copyfile("raw_logo.png", "logo_admin.png")
-              else:
-                  with open("logo_admin.png", "wb") as f:
-                      f.write(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x10\x17\x39\x00\x01\x15\x00\x09\xe1\xfd\x8b\x00\x00\x00\x00IEND\xaeB`\x82")
-          PYEOF
-          for dir in android/app/src/main/res/mipmap-*; do
-            case "$dir" in
-              *anydpi*)
-                rm -f "$dir"/ic_launcher*.png "$dir"/ic_launcher*.xml
-                ;;
-              *)
-                if [ -d "$dir" ]; then
-                  cp logo_admin.png "$dir/ic_launcher.png"
-                  cp logo_admin.png "$dir/ic_launcher_round.png"
-                  cp logo_admin.png "$dir/ic_launcher_foreground.png"
-                fi
-                ;;
-            esac
-          done
-          mkdir -p android/app/src/main/res/values android/app/src/main/res/mipmap-anydpi-v26
-          cat << 'EOF' > android/app/src/main/res/values/ic_launcher_background.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <color name="ic_launcher_background">#ffffff</color>
-          </resources>
-          EOF
-          cat << 'EOF' > android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-              <background android:drawable="@color/ic_launcher_background"/>
-              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
-          </adaptive-icon>
-          EOF
-          cp android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-
-      - name: Build Android APK
+      - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
@@ -125,5 +84,5 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FuturoAhora-Admin-debug-apk
+          name: Yimmi-Kambio-Admin-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
