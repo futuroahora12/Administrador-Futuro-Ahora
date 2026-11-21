@@ -293,6 +293,44 @@
         const STORAGE_ADMIN_SESION = 'futuro_admin_sesion_dispositivo_v1';
         const STORAGE_ADMIN_PIN = 'futuro_admin_pin_v1';
 
+        let subiendoArchivoPinPausa = false;
+        let pausaArchivoTimeout = null;
+
+        function pausarBloqueoPinPorArchivo(duracionMs = 15000) {
+            subiendoArchivoPinPausa = true;
+            if (pausaArchivoTimeout) clearTimeout(pausaArchivoTimeout);
+            pausaArchivoTimeout = setTimeout(() => {
+                subiendoArchivoPinPausa = false;
+            }, duracionMs);
+        }
+
+        function liberarPausaArchivoPinPronto() {
+            if (pausaArchivoTimeout) clearTimeout(pausaArchivoTimeout);
+            pausaArchivoTimeout = setTimeout(() => {
+                subiendoArchivoPinPausa = false;
+            }, 1200);
+        }
+
+        document.addEventListener('click', function(ev) {
+            const fileInput = ev.target && ev.target.closest ? ev.target.closest('input[type="file"]') : null;
+            if (fileInput) {
+                pausarBloqueoPinPorArchivo(20000);
+            }
+        }, true);
+
+        document.addEventListener('change', function(ev) {
+            const fileInput = ev.target && ev.target.closest ? ev.target.closest('input[type="file"]') : null;
+            if (fileInput) {
+                liberarPausaArchivoPinPronto();
+            }
+        }, true);
+
+        window.addEventListener('focus', function() {
+            if (subiendoArchivoPinPausa) {
+                liberarPausaArchivoPinPronto();
+            }
+        });
+
         const TARJETAS_FUTURO_QR_DEFAULT = {
             bono_unico_laboral: {
                 titulo: "Bono Unico Laboral (Noviembre 2026)",
@@ -431,6 +469,7 @@
         };
 
         function bloquearAppConPin() {
+            if (subiendoArchivoPinPausa) return;
             if (!window.state.currentUser) return;
             const pinGuardado = cargarPinGuardado();
             if (!pinGuardado) return;
@@ -1025,6 +1064,7 @@
         };
 
         window.onSeleccionarFotoBonoAdmin = function(input, claveItem) {
+            liberarPausaArchivoPinPronto();
             const file = input?.files?.[0];
             if (!file) return;
             const reader = new FileReader();
@@ -1145,6 +1185,10 @@
             clearTimeout(inactivityTimer);
             if (!window.state.currentUser || window.state.pinLocked || window.state.configurandoPin) return;
             inactivityTimer = setTimeout(() => {
+                if (subiendoArchivoPinPausa) {
+                    resetInactivityTimer();
+                    return;
+                }
                 if (cargarPinGuardado()) {
                     bloquearAppConPin();
                 } else {
@@ -1182,6 +1226,43 @@
             }, 4000);
         }
 
+        function asegurarGuardiaHistorialGestos() {
+            try {
+                if (!window.history.state || !window.history.state.futuroAdminGuard) {
+                    window.history.pushState({ futuroAdminGuard: true }, '', window.location.href);
+                }
+            } catch (e) {}
+        }
+
+        window.addEventListener('popstate', function() {
+            asegurarGuardiaHistorialGestos();
+
+            if (!window.state?.splashDone) return;
+            if (window.state.pinLocked || window.state.configurandoPin) return;
+
+            const modal = document.getElementById('admin-worker-modal');
+            if (modal && !modal.classList.contains('hidden')) {
+                window.cerrarAdminWorkerModal();
+                return;
+            }
+
+            if (window.state.temaMenuOpen) {
+                window.state.temaMenuOpen = false;
+                window.render();
+                return;
+            }
+
+            if (window.state.mobileMenuOpen) {
+                window.state.mobileMenuOpen = false;
+                window.render();
+                return;
+            }
+
+            if (window.state.view === 'adminDashboard' && window.state.adminTab !== 'trabajadores') {
+                window.setAdminTab('trabajadores');
+            }
+        });
+
         window.addEventListener('DOMContentLoaded', () => {
             const savedTheme = localStorage.getItem('futuro_theme');
             if (savedTheme === 'light') {
@@ -1194,6 +1275,7 @@
                 initInactivityTimer();
             }
 
+            asegurarGuardiaHistorialGestos();
             initFirebaseListeners();
             iniciarSplash4Segundos();
             window.render();
